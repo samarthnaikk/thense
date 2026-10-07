@@ -7,7 +7,7 @@ from datetime import date
 
 from . import __version__
 from .config import ensure_dirs
-from .ingest import bhavcopy, hf_datasets, indices, security_master
+from .ingest import bhavcopy, hf_datasets, hf_robust, indices, security_master
 from .report import status
 
 
@@ -44,6 +44,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_hf.add_argument("--workers", type=int, default=4,
                       help="parallel HF file downloads (default 4; lower on flaky links)")
 
+    p_hff = sub.add_parser("hf-fetch",
+                           help="robust resumable HF download (survives stalls)")
+    p_hff.add_argument("--dataset", choices=["minute", "daily", "options"],
+                       default="minute")
+    p_hff.add_argument("--workers", type=int, default=4)
+
     p_all = sub.add_parser("all", help="run the full acquisition pipeline")
     _add_bhavcopy_args(p_all)
     p_all.add_argument("--hf-datasets", nargs="*",
@@ -76,6 +82,8 @@ def main(argv: list[str] | None = None) -> int:
         indices.download(period=args.period)
     elif args.command == "hf":
         hf_datasets.download(args.dataset, max_workers=args.workers)
+    elif args.command == "hf-fetch":
+        hf_robust.fetch(args.dataset, workers=args.workers)
     elif args.command == "all":
         print("== security master ==")
         security_master.download()
