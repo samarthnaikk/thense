@@ -12,6 +12,7 @@ A 404 simply means "no file that day" (holiday/weekend) and is skipped.
 from __future__ import annotations
 
 import io
+import threading
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
@@ -21,7 +22,11 @@ import pandas as pd
 from tqdm import tqdm
 
 from ..config import BHAVCOPY_CONSOLIDATED, BHAVCOPY_RAW_DIR, ensure_dirs
-from .http import get_bytes, polite_sleep
+from .http import get_bytes, polite_sleep, set_min_interval
+
+# Set when NSE starts returning sustained 403s; pending work then short-circuits.
+_stop = threading.Event()
+_BLOCK_THRESHOLD = 20
 
 ARCHIVE_BASE = "https://nsearchives.nseindia.com"
 
@@ -123,10 +128,17 @@ def _normalise(raw: pd.DataFrame, day: date, source_format: str) -> pd.DataFrame
 
 
 def fetch_day(day: date) -> pd.DataFrame | None:
-    """Fetch and normalise one day's bhavcopy, or None if not a trading day."""
+    """Fetch and normalise one day's bhavcopy, or None if not a trading day.
+
+    Older dates may return 403 on the new-format path (not 404), so any
+    failure on one URL falls through to the next URL before giving up.
+    """
     for url in _urls_for(day):
         source_format = "new" if "BhavCopy_NSE_CM" in url else "old"
-        content = get_bytes(url)
+        try:
+            content = get_bytes(url)
+        except Exception:  # noqa: BLE001 — 403/5xx on a probe URL: try the other
+            continue
         if content is None:
             continue
         try:
@@ -143,6 +155,8 @@ def _day_path(day: date) -> Path:
 
 def download_day(day: date, *, force: bool = False) -> Path | None:
     """Download one day to Parquet. Returns the path (or None if no data)."""
+    if _stop.is_set():
+        return None
     path = _day_path(day)
     if path.exists() and not force:
         return path
@@ -166,13 +180,27 @@ def download_range(
     start: date,
     end: date,
     *,
-    workers: int = 8,
+    workers: int = 2,
+    delay: float = 0.5,
     force: bool = False,
 ) -> dict[str, int]:
-    """Download bhavcopy for every weekday in [start, end] (resumable)."""
+    """Download bhavcopy for every weekday in [start, end] (resumable).
+
+    ``delay`` is the global minimum spacing between outbound requests; keep it
+    high enough to stay under NSE's WAF radar. The run stops early (and stays
+    resumable) if NSE starts returning sustained 403s.
+    """
     ensure_dirs()
+    set_min_interval(delay)
+    _stop.clear()
     days = list(_weekdays(start, end))
-    stats = {"trading_days": 0, "skipped_existing": 0, "holidays": 0, "errors": 0}
+    stats = {
+        "trading_days": 0,
+        "skipped_existing": 0,
+        "holidays": 0,
+        "errors": 0,
+        "blocked": 0,
+    }
 
     pending = []
     for d in days:
@@ -185,21 +213,38 @@ def download_range(
         print(f"Nothing to do: all {stats['skipped_existing']} days already present.")
         return stats
 
+    consecutive_block = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(download_day, d, force=force): d for d in pending}
-        for fut in tqdm(as_completed(futures), total=len(futures), desc="bhavcopy"):
-            day = futures[fut]
-            try:
-                path = fut.result()
-            except Exception as exc:  # noqa: BLE001
-                stats["errors"] += 1
-                tqdm.write(f"  ! {day} error: {exc}")
-                continue
-            if path is None:
-                stats["holidays"] += 1
-            else:
-                stats["trading_days"] += 1
-            polite_sleep(0.02, 0.05)
+        try:
+            for fut in tqdm(as_completed(futures), total=len(futures), desc="bhavcopy"):
+                day = futures[fut]
+                if _stop.is_set():
+                    stats["blocked"] += 1
+                    continue
+                try:
+                    path = fut.result()
+                except Exception as exc:  # noqa: BLE001
+                    stats["errors"] += 1
+                    consecutive_block = (
+                        consecutive_block + 1 if "403" in str(exc) else 0
+                    )
+                    tqdm.write(f"  ! {day} error: {exc}")
+                    if consecutive_block >= _BLOCK_THRESHOLD:
+                        _stop.set()
+                        tqdm.write(
+                            "  !! sustained 403s — NSE is likely blocking this IP. "
+                            "Stopping; re-run later (download is resumable)."
+                        )
+                    continue
+                consecutive_block = 0
+                if path is None:
+                    stats["holidays"] += 1
+                else:
+                    stats["trading_days"] += 1
+        finally:
+            if _stop.is_set():
+                pool.shutdown(wait=False, cancel_futures=True)
     return stats
 
 

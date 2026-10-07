@@ -22,6 +22,30 @@ BROWSER_HEADERS = {
 
 _local = threading.local()
 
+# Global, process-wide minimum spacing between outbound requests. NSE's WAF
+# will 403 an IP that bursts, so callers can throttle all traffic here.
+_throttle_lock = threading.Lock()
+_last_request_at = 0.0
+MIN_INTERVAL_SECONDS = 0.0
+
+
+def set_min_interval(seconds: float) -> None:
+    """Set the global minimum spacing between requests (seconds)."""
+    global MIN_INTERVAL_SECONDS
+    MIN_INTERVAL_SECONDS = max(0.0, seconds)
+
+
+def _throttle() -> None:
+    """Block until the global minimum request spacing has elapsed."""
+    global _last_request_at
+    if MIN_INTERVAL_SECONDS <= 0:
+        return
+    with _throttle_lock:
+        wait = MIN_INTERVAL_SECONDS - (time.monotonic() - _last_request_at)
+        if wait > 0:
+            time.sleep(wait)
+        _last_request_at = time.monotonic()
+
 
 def get_session() -> requests.Session:
     """Return a per-thread requests Session with retries configured."""
@@ -55,6 +79,7 @@ def get_bytes(url: str, *, timeout: int = 40) -> bytes | None:
     missing trading day (404) from a transient failure.
     """
     session = get_session()
+    _throttle()
     resp = session.get(url, timeout=timeout)
     if resp.status_code == 404:
         return None

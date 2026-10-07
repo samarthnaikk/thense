@@ -15,7 +15,9 @@ def _add_bhavcopy_args(p: argparse.ArgumentParser) -> None:
                    help="start date YYYY-MM-DD (default 2000-01-01)")
     p.add_argument("--to", dest="end", default=date.today().isoformat(),
                    help="end date YYYY-MM-DD (default today)")
-    p.add_argument("--workers", type=int, default=8, help="parallel downloads")
+    p.add_argument("--workers", type=int, default=2, help="parallel downloads")
+    p.add_argument("--delay", type=float, default=0.5,
+                   help="min seconds between requests (WAF safety; default 0.5)")
     p.add_argument("--force", action="store_true", help="re-download existing days")
     p.add_argument("--consolidate", action="store_true",
                    help="merge per-day files into one Parquet after download")
@@ -58,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
             bhavcopy.parse_date(args.start),
             bhavcopy.parse_date(args.end),
             workers=args.workers,
+            delay=args.delay,
             force=args.force,
         )
         print("bhavcopy:", stats)
@@ -81,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             bhavcopy.parse_date(args.start),
             bhavcopy.parse_date(args.end),
             workers=args.workers,
+            delay=args.delay,
             force=args.force,
         )
         print("bhavcopy:", stats)
