@@ -41,6 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_hf = sub.add_parser("hf", help="download free bulk Hugging Face datasets")
     p_hf.add_argument("--dataset", choices=["daily", "minute", "options"],
                       default="daily")
+    p_hf.add_argument("--workers", type=int, default=4,
+                      help="parallel HF file downloads (default 4; lower on flaky links)")
 
     p_all = sub.add_parser("all", help="run the full acquisition pipeline")
     _add_bhavcopy_args(p_all)
@@ -73,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "indices":
         indices.download(period=args.period)
     elif args.command == "hf":
-        hf_datasets.download(args.dataset)
+        hf_datasets.download(args.dataset, max_workers=args.workers)
     elif args.command == "all":
         print("== security master ==")
         security_master.download()

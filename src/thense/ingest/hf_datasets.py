@@ -26,8 +26,12 @@ PATTERNS = {
 }
 
 
-def download(dataset: str) -> Path:
-    """Snapshot a dataset (or a subset) into data/raw/hf/<repo>."""
+def download(dataset: str, max_workers: int = 4) -> Path:
+    """Snapshot a dataset (or a subset) into data/raw/hf/<repo>.
+
+    ``max_workers`` controls parallel file downloads; keep it low (2-4) on
+    flaky links, where high concurrency causes stalled transfers.
+    """
     from huggingface_hub import snapshot_download
 
     ensure_dirs()
@@ -47,7 +51,7 @@ def download(dataset: str) -> Path:
         repo_type="dataset",
         local_dir=local,
         allow_patterns=patterns,
-        max_workers=8,
+        max_workers=max_workers,
     )
     print(f"  done: {local}")
     return local
