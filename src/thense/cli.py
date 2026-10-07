@@ -8,6 +8,7 @@ from datetime import date
 from . import __version__
 from .config import ensure_dirs
 from .ingest import bhavcopy, hf_datasets, indices, security_master
+from .report import status
 
 
 def _add_bhavcopy_args(p: argparse.ArgumentParser) -> None:
@@ -29,6 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("security-master", help="download NSE EQUITY_L.csv master")
+    sub.add_parser("status", help="report local data coverage")
 
     p_bhav = sub.add_parser("bhavcopy", help="download daily all-market bhavcopy")
     _add_bhavcopy_args(p_bhav)
@@ -53,7 +55,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     ensure_dirs()
 
-    if args.command == "security-master":
+    if args.command == "status":
+        status()
+    elif args.command == "security-master":
         security_master.download()
     elif args.command == "bhavcopy":
         stats = bhavcopy.download_range(
