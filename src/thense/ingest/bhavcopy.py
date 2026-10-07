@@ -86,13 +86,18 @@ _OLD_RENAME = {
 }
 
 
+# NSE's UDiFF (new-format) archive starts here; earlier dates only exist in
+# the legacy per-month path. Trying the wrong format first costs a wasted
+# request per day, so order by era and keep the other as a fallback.
+NEW_FORMAT_START = date(2024, 1, 1)
+
+
 def _urls_for(day: date) -> list[str]:
     ymd = day.strftime("%Y%m%d")
     mon = day.strftime("%b").upper()
-    return [
-        NEW_URL.format(ymd=ymd),
-        OLD_URL.format(yyyy=day.year, mon=mon, dd=day.strftime("%d")),
-    ]
+    new = NEW_URL.format(ymd=ymd)
+    old = OLD_URL.format(yyyy=day.year, mon=mon, dd=day.strftime("%d"))
+    return [new, old] if day >= NEW_FORMAT_START else [old, new]
 
 
 def _read_zip_csv(content: bytes) -> pd.DataFrame:
@@ -112,14 +117,17 @@ def _normalise(raw: pd.DataFrame, day: date, source_format: str) -> pd.DataFrame
     df["date"] = pd.to_datetime(df["date"]).dt.normalize()
     df["source_format"] = source_format
 
-    for col in ("open", "high", "low", "close", "last", "prev_close", "turnover"):
-        df[col] = pd.to_numeric(df.get(col), errors="coerce")
-    for col in ("volume", "trades"):
-        df[col] = pd.to_numeric(df.get(col), errors="coerce").astype("Int64")
-
+    # Older archives omit columns (e.g. pre-2010 files have no ISIN or
+    # TOTALTRADES), so materialise every canonical column before casting.
     for col in CANONICAL_COLUMNS:
         if col not in df.columns:
             df[col] = pd.NA
+
+    for col in ("open", "high", "low", "close", "last", "prev_close", "turnover"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    for col in ("volume", "trades"):
+        df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+
     df = df[CANONICAL_COLUMNS]
     df["symbol"] = df["symbol"].astype("string").str.strip()
     df["series"] = df["series"].astype("string").str.strip()
