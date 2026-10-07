@@ -32,16 +32,33 @@ uv run python -m thense.cli all --from 2000-01-01 --consolidate
 
 # individual steps
 uv run python -m thense.cli security-master
-uv run python -m thense.cli bhavcopy --from 2020-01-01 --to 2020-12-31 --workers 8 --consolidate
+uv run python -m thense.cli bhavcopy --from 2020-01-01 --to 2020-12-31 --workers 2 --delay 0.5 --consolidate
 uv run python -m thense.cli indices --period max
 uv run python -m thense.cli hf --dataset daily     # or: minute | options
 
 # or via the wrapper script
 uv run python scripts/download_data.py bhavcopy --from 2024-01-01
+
+# long runs should be detached (survives the terminal):
+python scripts/run_bg.py data/logs/bhavcopy_full.log -- \
+    bhavcopy --from 2000-01-01 --workers 2 --delay 0.3 --consolidate
 ```
 
 Downloads are resumable: each trading day is one Parquet file and is skipped if
 it already exists (`--force` to re-fetch). HTTP 404 simply means a holiday.
+Requests are globally rate-limited (`--delay`) to stay under NSE's WAF, and the
+run stops early (still resumable) if NSE starts returning sustained 403s.
+
+### Bhavcopy archive eras
+
+| Era | Format | URL pattern |
+|---|---|---|
+| 2000 – 2023 | legacy | `content/historical/EQUITIES/<YYYY>/<MON>/cm<DD><MON><YYYY>bhav.csv.zip` |
+| 2024 – today | UDiFF | `content/cm/BhavCopy_NSE_CM_0_0_0_<YYYYMMDD>_F_0000.csv.zip` |
+
+Pre‑2010 files have a thinner schema (no `ISIN`/`TOTALTRADES`); those columns come
+out null. All rows are normalised to one schema and concatenated into
+`data/processed/bhavcopy/bhavcopy.parquet`.
 
 ## Layout
 
@@ -52,12 +69,30 @@ src/thense/ingest/bhavcopy.py   NSE daily all-market bhavcopy
 src/thense/ingest/security_master.py
 src/thense/ingest/indices.py    Yahoo daily index/macro series
 src/thense/ingest/hf_datasets.py
+src/thense/report.py            `thense status` coverage report
 src/thense/cli.py               command-line entry point
 scripts/download_data.py        wrapper
+scripts/run_bg.py               detached launcher for long downloads
 data/                           (gitignored) raw + processed Parquet
 ```
+
+## Current coverage (as of 2026-10-07)
+
+| Dataset | Coverage | Size |
+|---|---|---|
+| NSE bhavcopy | 6,625 trading days, **10,672,269 rows**, 8,897 symbols, 2000-01-03 → 2026-10-07 | 723 MB (6,625 files) |
+| Security master | 2,599 listed securities | 0.3 MB |
+| Indices / macro | India VIX, Nifty, Bank Nifty, Sensex + global cues (daily) | 3 MB |
+| HF daily (Upstox-derived) | 2,535 symbols, 2000 → 2026-01-22, 6.97M rows | 193 MB |
+| HF minute | **stopped partway** (resumable) | partial |
+| HF options | **stopped partway** (resumable) | partial |
+
+Run `thense status` for the live picture.
 
 ## Notes
 
 - Data is for **internal research only**; NSE/broker data may not be redistributed.
-- The HF daily dataset ends around 2026-01-22; recent days come from NSE bhavcopy.
+- The HF daily dataset is community-sourced (Upstox), stops ~2026-01-22, and is
+  likely survivorship-biased; NSE bhavcopy is the official, point-in-time record
+  (includes delisted names) and is current. Use bhavcopy as the source of truth.
+- Bhavcopy has no delivery-% — add `sec_bhavdata_full_<DDMMYYYY>.csv` later if needed.
