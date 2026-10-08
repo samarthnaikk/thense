@@ -84,8 +84,8 @@ data/                           (gitignored) raw + processed Parquet
 | Security master | 2,599 listed securities | 0.3 MB |
 | Indices / macro | India VIX, Nifty, Bank Nifty, Sensex + global cues (daily) | 3 MB |
 | HF daily (Upstox-derived) | 2,535 symbols, 2000 → 2026-01-22, 6.97M rows | 193 MB |
-| HF minute | **stopped partway** (resumable) | partial |
-| HF options | **stopped partway** (resumable) | partial |
+| HF minute (Upstox-derived) | 2,535 symbols, **1-min 2022-01-03 → 2026-01-21, 713.45M rows** | 9.7 GB (8 shards) |
+| HF options | incomplete (partial; use `hf-fetch --dataset options`) | ~112 MB |
 
 Run `thense status` for the live picture.
 
